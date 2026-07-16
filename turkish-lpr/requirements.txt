@@ -1,0 +1,17 @@
+# Turkish LPR Service
+# Dependencies for license plate recognition from i-PRO camera RTSP streams.
+
+# ── Core ────────────────────────────────────────────────────────────────────
+opencv-python>=4.8
+numpy>=1.24
+
+# ── Detection ──────────────────────────────────────────────────────────────
+ultralytics>=8.0
+
+# ── OCR ────────────────────────────────────────────────────────────────────
+easyocr>=1.7
+
+# ── Configuration & CLI ────────────────────────────────────────────────────
+pydantic-settings>=2.0
+python-dotenv>=1.0
+typer[all]>=0.9
