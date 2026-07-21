@@ -5,12 +5,15 @@
 opencv-python>=4.8
 numpy>=1.24
 
-# ── Detection ──────────────────────────────────────────────────────────────
-ultralytics>=8.0
-huggingface-hub>=0.20
+# ── Detection + OCR (FastALPR) ─────────────────────────────────────────────
+# FastALPR bundles plate detection (open-image-models) and plate OCR
+# (fast-plate-ocr) in a single ONNX-based framework.
+# Use [onnx-gpu] instead of [onnx] if you have an NVIDIA GPU with CUDA.
+fast-alpr[onnx]>=0.2
 
-# ── OCR ────────────────────────────────────────────────────────────────────
-easyocr>=1.7
+# ── OCR fallback (optional) ────────────────────────────────────────────────
+# Uncomment if FastALPR OCR underperforms and you want EasyOCR as backup.
+# easyocr>=1.7
 
 # ── Configuration & CLI ────────────────────────────────────────────────────
 pydantic-settings>=2.0

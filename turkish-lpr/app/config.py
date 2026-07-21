@@ -48,12 +48,12 @@ class Settings(BaseSettings):
     rtsp_reconnect_delay: int = 3
     rtsp_max_failures: int = 30
 
-    # ── Plate Detector ──────────────────────────────────────────────────────
-    detector_model_path: str = "models/plate_detect.pt"
+    # ── Plate Detector (FastALPR) ────────────────────────────────────────────
+    detector_model_name: str = "yolo-v9-t-384-license-plate-end2end"
     detector_confidence: float = 0.25
 
-    # ── OCR ─────────────────────────────────────────────────────────────────
-    ocr_languages: str = "en"
+    # ── OCR (FastALPR) ──────────────────────────────────────────────────────
+    ocr_model_name: str = "global-plates-mobile-vit-v2-model"
     ocr_pad_ratio: float = 0.15
 
     # ── Multi-frame Voting ──────────────────────────────────────────────────
@@ -88,11 +88,8 @@ class Settings(BaseSettings):
             f"@{self.rtsp_host}:{self.rtsp_port}/{self.rtsp_path}"
         )
 
-    @property
-    def detector_model_abs_path(self) -> Path:
-        """Resolve the detector model path relative to project root."""
-        p = Path(self.detector_model_path)
-        return p if p.is_absolute() else PROJECT_ROOT / p
+    # detector_model_abs_path removed — FastALPR auto-downloads ONNX models
+    # by name; no local .pt file path needed.
 
     @property
     def db_abs_path(self) -> Path:
@@ -115,9 +112,9 @@ class Settings(BaseSettings):
             f"│  RTSP URL       : {self.rtsp_url_masked}",
             f"│  Transport      : {self.rtsp_transport.upper()}",
             f"│  Reconnect      : {self.rtsp_reconnect_delay}s / {self.rtsp_max_failures} failures",
-            f"│  Detector model : {self.detector_model_path}",
+            f"│  Detector model : {self.detector_model_name}",
             f"│  Confidence     : {self.detector_confidence}",
-            f"│  OCR languages  : {self.ocr_languages}",
+            f"│  OCR model      : {self.ocr_model_name}",
             f"│  OCR pad ratio  : {self.ocr_pad_ratio}",
             f"│  Voting frames  : {self.voting_frame_count}",
             f"│  Min agreement  : {self.voting_min_agreement}",

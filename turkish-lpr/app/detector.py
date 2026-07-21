@@ -1,22 +1,24 @@
 """
-app/detector.py — License plate detection using YOLOv8.
+app/detector.py — License plate detection + OCR using FastALPR.
 
-Wraps the Ultralytics YOLO model to detect license plates in camera frames.
-Designed so any YOLOv8-compatible .pt file can be swapped in — just change
-DETECTOR_MODEL_PATH in .env.
+FastALPR bundles both detection (open-image-models) and OCR (fast-plate-ocr)
+in a single ONNX-based framework.  A single `detect()` call returns both
+bounding boxes and raw OCR text.
+
+The detector model and OCR model can be swapped by changing
+DETECTOR_MODEL_NAME and OCR_MODEL_NAME in .env.
 
 Usage:
     from app.detector import PlateDetector
-    detector = PlateDetector(settings)
+    detector = PlateDetector()
     detections = detector.detect(frame)
-    annotated = detector.draw(frame, detections)
+    annotated = PlateDetector.draw(frame, detections)
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -31,12 +33,14 @@ logger = logging.getLogger("turkish_lpr.detector")
 
 @dataclass
 class Detection:
-    """A single detected license plate bounding box."""
+    """A single detected license plate with bounding box and OCR result."""
     x1: int
     y1: int
     x2: int
     y2: int
-    confidence: float
+    confidence: float                  # detection confidence
+    ocr_text: str = ""                 # raw OCR text from FastALPR
+    ocr_confidence: float = 0.0       # OCR confidence score
     class_name: str = "license_plate"
 
     @property
@@ -63,59 +67,68 @@ class Detection:
             "x2": self.x2,
             "y2": self.y2,
             "confidence": round(self.confidence, 4),
+            "ocr_text": self.ocr_text,
+            "ocr_confidence": round(self.ocr_confidence, 4),
             "class_name": self.class_name,
         }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Plate Detector
+# Plate Detector (FastALPR)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PlateDetector:
     """
-    YOLOv8-based license plate detector.
+    License plate detector + OCR using FastALPR.
 
-    Loads any Ultralytics-compatible .pt model.  The default is the
-    keremberke pretrained plate model, but a locally fine-tuned model
-    can replace it by changing DETECTOR_MODEL_PATH in .env.
+    FastALPR uses ONNX models that are auto-downloaded on first use.
+    No manual model download step is needed.
+
+    To swap models, change DETECTOR_MODEL_NAME / OCR_MODEL_NAME in .env.
     """
 
     def __init__(
         self,
-        model_path: str | Path | None = None,
+        detector_model: str | None = None,
+        ocr_model: str | None = None,
         confidence: float | None = None,
     ):
         """
         Args:
-            model_path:  Path to a YOLOv8 .pt file.  If None, reads from config.
-            confidence:  Minimum detection confidence.  If None, reads from config.
+            detector_model:  FastALPR detector model name.  If None, reads from config.
+            ocr_model:       FastALPR OCR model name.  If None, reads from config.
+            confidence:      Minimum detection confidence.  If None, reads from config.
         """
-        # Lazy import — ultralytics is heavy; don't slow down unrelated commands
-        from ultralytics import YOLO
+        # Lazy import — fast_alpr pulls in onnxruntime which is heavy
+        from fast_alpr import ALPR
 
         from app.config import get_settings
 
         settings = get_settings()
-        self._model_path = Path(model_path or settings.detector_model_abs_path)
+        self._detector_model = detector_model or settings.detector_model_name
+        self._ocr_model = ocr_model or settings.ocr_model_name
         self._confidence = confidence if confidence is not None else settings.detector_confidence
 
-        if not self._model_path.exists():
-            raise FileNotFoundError(
-                f"Model file not found: {self._model_path}\n"
-                f"Run: python -m app.main download-model"
-            )
-
-        logger.info("Loading YOLO model from %s", self._model_path)
-        self._model = YOLO(str(self._model_path))
         logger.info(
-            "Model loaded — confidence threshold: %.2f", self._confidence
+            "Initializing FastALPR — detector=%s, ocr=%s",
+            self._detector_model,
+            self._ocr_model,
+        )
+
+        self._alpr = ALPR(
+            detector_model=self._detector_model,
+            ocr_model=self._ocr_model,
+        )
+
+        logger.info(
+            "FastALPR ready — confidence threshold: %.2f", self._confidence
         )
 
     # ── Core detection ──────────────────────────────────────────────────────
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         """
-        Run plate detection on a single frame.
+        Run plate detection + OCR on a single frame.
 
         Args:
             frame: BGR image (numpy array from OpenCV).
@@ -123,28 +136,37 @@ class PlateDetector:
         Returns:
             List of Detection objects, sorted by confidence (highest first).
         """
-        results = self._model(frame, conf=self._confidence, verbose=False)
+        # FastALPR expects RGB input
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        results = self._alpr.predict(frame_rgb)
 
         detections: list[Detection] = []
         for result in results:
-            if result.boxes is None:
+            # Extract bounding box coordinates
+            bbox = result.bounding_box
+            x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+
+            det_conf = float(result.detection_confidence)
+
+            # Filter by confidence threshold
+            if det_conf < self._confidence:
                 continue
-            for box in result.boxes:
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-                conf = float(box.conf[0])
-                cls_id = int(box.cls[0])
-                cls_name = result.names.get(cls_id, "license_plate")
 
-                detections.append(Detection(
-                    x1=int(x1),
-                    y1=int(y1),
-                    x2=int(x2),
-                    y2=int(y2),
-                    confidence=conf,
-                    class_name=cls_name,
-                ))
+            ocr_text = result.ocr_text if hasattr(result, "ocr_text") else str(result.text if hasattr(result, "text") else "")
+            ocr_conf = float(result.ocr_confidence) if hasattr(result, "ocr_confidence") else 0.0
 
-        # Sort by confidence, highest first
+            detections.append(Detection(
+                x1=x1,
+                y1=y1,
+                x2=x2,
+                y2=y2,
+                confidence=det_conf,
+                ocr_text=ocr_text,
+                ocr_confidence=ocr_conf,
+            ))
+
+        # Sort by detection confidence, highest first
         detections.sort(key=lambda d: d.confidence, reverse=True)
 
         logger.info(
@@ -165,21 +187,21 @@ class PlateDetector:
         font_scale: float = 0.6,
     ) -> np.ndarray:
         """
-        Draw bounding boxes and confidence labels on a frame.
+        Draw bounding boxes, confidence labels, and OCR text on a frame.
 
         Args:
             frame:       BGR image (will NOT be modified in-place).
             detections:  List of Detection objects.
             color:       BGR color for boxes and text.
             thickness:   Line thickness in pixels.
-            font_scale:  Font scale for the confidence label.
+            font_scale:  Font scale for labels.
 
         Returns:
             A copy of the frame with annotations drawn.
         """
         annotated = frame.copy()
 
-        for i, det in enumerate(detections):
+        for det in detections:
             # Draw the bounding box
             cv2.rectangle(
                 annotated,
@@ -189,8 +211,12 @@ class PlateDetector:
                 thickness,
             )
 
-            # Label: "PLATE 87.3%"
-            label = f"PLATE {det.confidence:.1%}"
+            # Label: "34ABC123 87.3%" (OCR text + detection confidence)
+            if det.ocr_text:
+                label = f"{det.ocr_text} {det.confidence:.1%}"
+            else:
+                label = f"PLATE {det.confidence:.1%}"
+
             label_size, baseline = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1
             )

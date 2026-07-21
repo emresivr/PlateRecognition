@@ -54,6 +54,23 @@ MAX_CONSECUTIVE_FAILURES = 30     # Frames of consecutive read failures before r
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 print("[INIT] RTSP transport forced to TCP.", flush=True)
 
+# ── Verify that OpenCV was built with GUI support ───────────────────────────
+# opencv-python-headless does not include imshow/destroyAllWindows.
+# Detect this early so the user gets a clear message instead of a crash.
+try:
+    cv2.namedWindow("__gui_check__")
+    cv2.destroyWindow("__gui_check__")
+except cv2.error:
+    print(
+        "\n[ERROR] OpenCV GUI support is missing.\n"
+        "  You probably have opencv-python-headless installed.\n"
+        "  Fix:\n"
+        "    pip uninstall opencv-python opencv-python-headless -y\n"
+        "    pip install opencv-python\n",
+        flush=True,
+    )
+    sys.exit(1)
+
 
 # =============================================================================
 # Threaded Frame Grabber

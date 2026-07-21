@@ -5,14 +5,12 @@ Commands:
     health          Check configuration and imports.
     stream-status   Connect to the camera and report stream properties.
     grab-frame      Capture one frame and save it to data/test_frame.jpg.
-    download-model  Download the pretrained plate detection model.
-    detect-frame    Run plate detection on a frame and save annotated result.
+    detect-frame    Run plate detection + OCR on a frame and save annotated result.
 
 Usage:
     python -m app.main health
     python -m app.main stream-status
     python -m app.main grab-frame
-    python -m app.main download-model
     python -m app.main detect-frame
 """
 
@@ -53,12 +51,12 @@ def health():
         ("cv2 (OpenCV)", "cv2"),
         ("numpy", "numpy"),
         ("pydantic_settings", "pydantic_settings"),
+        ("fast_alpr", "fast_alpr"),
     ]
 
-    # Optional imports — may not be installed yet in early chapters
+    # Optional imports — may be needed for fallback or future chapters
     optional_checks: list[tuple[str, str]] = [
-        ("ultralytics (YOLO)", "ultralytics"),
-        ("easyocr", "easyocr"),
+        ("easyocr (fallback OCR)", "easyocr"),
     ]
 
     all_ok = True
@@ -189,72 +187,6 @@ def grab_frame(
     raise typer.Exit(code=0)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# download-model — Chapter 3
-# ─────────────────────────────────────────────────────────────────────────────
-
-# The keremberke YOLOv8 plate model on Hugging Face.
-_HF_REPO = "keremberke/yolov8s-license-plate-detection"
-_HF_FILENAME = "best.pt"
-
-
-@app.command("download-model")
-def download_model(
-    repo: str = typer.Option(_HF_REPO, help="Hugging Face repo ID."),
-    filename: str = typer.Option(_HF_FILENAME, help="Weight file name in the repo."),
-):
-    """Download the pretrained YOLOv8 plate detection model from Hugging Face."""
-
-    from app.config import get_settings, setup_logging
-
-    settings = get_settings()
-    log = setup_logging(settings)
-    dest = settings.detector_model_abs_path
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    if dest.exists():
-        size_mb = dest.stat().st_size / (1024 * 1024)
-        typer.echo(f"Model already exists at {dest} ({size_mb:.1f} MB)")
-        if not typer.confirm("Overwrite?", default=False):
-            raise typer.Exit(code=0)
-
-    typer.echo(f"Downloading {repo}/{filename} …")
-    typer.echo(f"Destination: {dest}")
-
-    try:
-        from huggingface_hub import hf_hub_download
-
-        downloaded_path = hf_hub_download(
-            repo_id=repo,
-            filename=filename,
-            local_dir=str(dest.parent),
-            local_dir_use_symlinks=False,
-        )
-
-        # hf_hub_download saves with the original filename; rename to our target
-        src = Path(downloaded_path)
-        if src != dest:
-            src.rename(dest)
-
-        size_mb = dest.stat().st_size / (1024 * 1024)
-        typer.echo()
-        typer.echo(f"  ✓ Model downloaded")
-        typer.echo(f"    Path : {dest}")
-        typer.echo(f"    Size : {size_mb:.1f} MB")
-        typer.echo()
-        typer.echo("download-model: OK ✓")
-        log.info("Model downloaded to %s (%.1f MB)", dest, size_mb)
-        raise typer.Exit(code=0)
-
-    except ImportError:
-        typer.echo("✗ huggingface_hub not installed.")
-        typer.echo("  Run: pip install huggingface-hub")
-        raise typer.Exit(code=1)
-    except Exception as e:
-        typer.echo(f"✗ Download failed: {e}")
-        log.exception("download-model failed")
-        raise typer.Exit(code=1)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # detect-frame — Chapter 3
@@ -323,8 +255,8 @@ def detect_frame(
     typer.echo("Loading detector …")
     try:
         detector = PlateDetector()
-    except FileNotFoundError as e:
-        typer.echo(f"✗ {e}")
+    except Exception as e:
+        typer.echo(f"✗ Detector init failed: {e}")
         raise typer.Exit(code=1)
 
     typer.echo("Running detection …")
@@ -342,6 +274,11 @@ def detect_frame(
                 f"conf={det.confidence:.1%}  "
                 f"size={det.width}×{det.height}px"
             )
+            if det.ocr_text:
+                typer.echo(
+                    f"        OCR: \"{det.ocr_text}\"  "
+                    f"ocr_conf={det.ocr_confidence:.1%}"
+                )
 
     # ── Save annotated frame ────────────────────────────────────────────────
     out_path = Path(output)
