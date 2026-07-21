@@ -143,18 +143,26 @@ class PlateDetector:
 
         detections: list[Detection] = []
         for result in results:
+            det = result.detection
+            
             # Extract bounding box coordinates
-            bbox = result.bounding_box
-            x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-
-            det_conf = float(result.detection_confidence)
+            x1, y1, x2, y2 = det.box.x1, det.box.y1, det.box.x2, det.box.y2
+            det_conf = float(det.confidence)
 
             # Filter by confidence threshold
             if det_conf < self._confidence:
                 continue
 
-            ocr_text = result.ocr_text if hasattr(result, "ocr_text") else str(result.text if hasattr(result, "text") else "")
-            ocr_conf = float(result.ocr_confidence) if hasattr(result, "ocr_confidence") else 0.0
+            ocr_text = ""
+            ocr_conf = 0.0
+            
+            if result.ocr:
+                ocr_text = result.ocr.text
+                # confidence might be a single float or a list of floats per character
+                if isinstance(result.ocr.confidence, list):
+                    ocr_conf = sum(result.ocr.confidence) / len(result.ocr.confidence) if result.ocr.confidence else 0.0
+                else:
+                    ocr_conf = float(result.ocr.confidence)
 
             detections.append(Detection(
                 x1=x1,
