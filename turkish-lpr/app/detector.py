@@ -146,7 +146,8 @@ class PlateDetector:
             det = result.detection
             
             # Extract bounding box coordinates
-            x1, y1, x2, y2 = det.box.x1, det.box.y1, det.box.x2, det.box.y2
+            bbox = det.bounding_box
+            x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
             det_conf = float(det.confidence)
 
             # Filter by confidence threshold
